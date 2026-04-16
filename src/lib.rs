@@ -5,6 +5,8 @@
 // Created: 15/04/2026
 // ===========================================================
 
+use std::fmt::Debug;
+
 pub mod dispatcher;
 
 // all events must be cloneable and be shared across threads
@@ -14,7 +16,7 @@ pub trait Event: Clone + Send + 'static {}
 impl<T: Clone + Send + 'static> Event for T {}
 
 // all event subscriber must fufill this
-pub trait EventSubscriber<E>: Send + Sync {
+pub trait EventSubscriber<E>: Send + Sync + Debug {
     fn on_event(&self, event: E);
 }
 

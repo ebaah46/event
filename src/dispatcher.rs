@@ -12,9 +12,17 @@ use crate::{Event, EventSubscriber};
 /**
  * An Event System's dispatcher
  */
-
+#[derive(Debug)]
 pub struct EventDispatcher<E: Event> {
     subscribers: RwLock<Vec<Arc<dyn EventSubscriber<E>>>>,
+}
+
+impl<E: Event> Default for EventDispatcher<E> {
+    fn default() -> Self {
+        Self {
+            subscribers: Default::default(),
+        }
+    }
 }
 
 impl<E: Event> EventDispatcher<E> {
@@ -82,7 +90,7 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    #[derive(Default, Debug)]
     struct TestListener {
         event_messages: RwLock<Vec<String>>,
     }
