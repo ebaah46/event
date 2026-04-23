@@ -32,7 +32,7 @@ impl<E: Event> Default for EventDispatcher<E> {
 
 impl<E: Event> EventDispatcher<E> {
     pub fn new() -> Self {
-        env_logger::init();
+        let _ = env_logger::builder().is_test(true).try_init();
         // spin off a thread to receive the events and trigger the listeners
         let subscribers = Arc::new(RwLock::new(vec![]));
         let (tx, rx) = unbounded::<E>();
