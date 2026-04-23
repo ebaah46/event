@@ -5,7 +5,8 @@
 // Created: 15/04/2026
 // ===========================================================
 
-use std::sync::{Arc, RwLock};
+use parking_lot::RwLock;
+use std::sync::Arc;
 
 use crate::{Event, EventSubscriber};
 
@@ -37,25 +38,17 @@ impl<E: Event> EventDispatcher<E> {
      */
     pub fn subscribe(&self, subscriber: Arc<dyn EventSubscriber<E>>) {
         dbg!("Received request to subscribe");
-        if let Ok(_) = self
-            .subscribers
-            .write()
-            .map(|mut list| list.push(subscriber))
-        {
-            dbg!("Registeration completed in dispatcher");
-        } else {
-            dbg!("Registeration failed in dispatcher");
-        }
+        self.subscribers.write().push(subscriber);
+        dbg!("Registeration completed in dispatcher");
     }
 
     /*
      * A method to be triggered to dispatch an event
      */
     pub fn dispatch(&self, event: E) {
-        if let Ok(listeners) = self.subscribers.read() {
-            for listener in listeners.iter() {
-                (*listener.as_ref()).on_event(event.clone());
-            }
+        let listeners = self.subscribers.read();
+        for listener in listeners.iter() {
+            (*listener.as_ref()).on_event(event.clone());
         }
     }
 }
@@ -97,10 +90,7 @@ mod tests {
 
     impl EventSubscriber<TestEvent> for TestListener {
         fn on_event(&self, event: TestEvent) {
-            _ = self
-                .event_messages
-                .write()
-                .map(|mut list| list.push(event.to_string()));
+            self.event_messages.write().push(event.to_string());
             println!("Event triggered with :{}", event);
         }
     }
@@ -110,15 +100,15 @@ mod tests {
         let dispatcher: EventDispatcher<TestEvent> = EventDispatcher::new();
         let subscriber = Arc::new(TestListener::default());
         {
-            let dispatcher_gaurd = dispatcher.subscribers.read().unwrap();
+            let dispatcher_gaurd = dispatcher.subscribers.read();
             assert_eq!(dispatcher_gaurd.len(), 0);
-            let subscriber_gaurd = subscriber.event_messages.read().unwrap();
+            let subscriber_gaurd = subscriber.event_messages.read();
             assert_eq!(subscriber_gaurd.len(), 0);
         }
         dispatcher.subscribe(subscriber.clone());
-        let dispatcher_gaurd = dispatcher.subscribers.read().unwrap();
+        let dispatcher_gaurd = dispatcher.subscribers.read();
         assert_eq!(dispatcher_gaurd.len(), 1);
-        let subscriber_gaurd = subscriber.event_messages.read().unwrap();
+        let subscriber_gaurd = subscriber.event_messages.read();
         assert_eq!(subscriber_gaurd.len(), 0);
     }
 
@@ -127,20 +117,20 @@ mod tests {
         let dispatcher: EventDispatcher<TestEvent> = EventDispatcher::new();
         let subscriber = Arc::new(TestListener::default());
         {
-            let dispatcher_gaurd = dispatcher.subscribers.read().unwrap();
+            let dispatcher_gaurd = dispatcher.subscribers.read();
             assert_eq!(dispatcher_gaurd.len(), 0);
-            let messages = subscriber.event_messages.read().unwrap();
+            let messages = subscriber.event_messages.read();
             assert_eq!(messages.len(), 0);
         }
         dispatcher.subscribe(subscriber.clone());
-        let dispatcher_gaurd = dispatcher.subscribers.read().unwrap();
+        let dispatcher_gaurd = dispatcher.subscribers.read();
         assert_eq!(dispatcher_gaurd.len(), 1);
         {
-            let messages = subscriber.event_messages.read().unwrap();
+            let messages = subscriber.event_messages.read();
             assert_eq!(messages.len(), 0)
         }
         dispatcher.dispatch(TestEvent::Second);
-        let messages = subscriber.event_messages.read().unwrap();
+        let messages = subscriber.event_messages.read();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0], TestEvent::Second.to_string());
     }
@@ -150,13 +140,13 @@ mod tests {
         let dispatcher: EventDispatcher<TestEvent> = EventDispatcher::new();
         let subscriber = Arc::new(TestListener::default());
         {
-            let dispatcher_gaurd = dispatcher.subscribers.read().unwrap();
+            let dispatcher_gaurd = dispatcher.subscribers.read();
             assert_eq!(dispatcher_gaurd.len(), 0);
-            let messages = subscriber.event_messages.read().unwrap();
+            let messages = subscriber.event_messages.read();
             assert_eq!(messages.len(), 0);
         }
         dispatcher.dispatch(TestEvent::Second);
-        let messages = subscriber.event_messages.read().unwrap();
+        let messages = subscriber.event_messages.read();
         assert_eq!(messages.len(), 0);
     }
 }
