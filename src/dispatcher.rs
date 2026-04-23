@@ -77,6 +77,13 @@ impl<E: Event> EventDispatcher<E> {
             log::info!("EventDispatcher - dispatch - sent new event");
         }
     }
+
+    /*
+     * Read the number of subscribers
+     */
+    pub fn subscriber_length(&self) -> usize {
+        self.subscribers.read().len()
+    }
 }
 
 #[cfg(test)]
