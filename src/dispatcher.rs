@@ -5,8 +5,10 @@
 // Created: 15/04/2026
 // ===========================================================
 
+use crossbeam_channel::{Sender, unbounded};
 use parking_lot::RwLock;
 use std::sync::Arc;
+use std::thread;
 
 use crate::{Event, EventSubscriber};
 
@@ -15,21 +17,46 @@ use crate::{Event, EventSubscriber};
  */
 #[derive(Debug)]
 pub struct EventDispatcher<E: Event> {
-    subscribers: RwLock<Vec<Arc<dyn EventSubscriber<E>>>>,
+    subscribers: Arc<RwLock<Vec<Arc<dyn EventSubscriber<E>>>>>,
+    sender: Option<Sender<E>>,
 }
 
 impl<E: Event> Default for EventDispatcher<E> {
     fn default() -> Self {
         Self {
             subscribers: Default::default(),
+            sender: None,
         }
     }
 }
 
 impl<E: Event> EventDispatcher<E> {
     pub fn new() -> Self {
+        env_logger::init();
+        // spin off a thread to receive the events and trigger the listeners
+        let subscribers = Arc::new(RwLock::new(vec![]));
+        let (tx, rx) = unbounded::<E>();
+        let subs_for_dispatcher = Arc::clone(&subscribers);
+        let builder = thread::Builder::new().name("Event system thread".into());
+
+        builder
+            .spawn(move || {
+                for event in rx {
+                    log::info!("EventDispatcher - dispatcher thread - received new event");
+                    let listeners: Vec<Arc<dyn EventSubscriber<E>>> = {
+                        let gaurd = subs_for_dispatcher.read();
+                        gaurd.clone()
+                    };
+                    for listener in listeners.iter() {
+                        (*listener.as_ref()).on_event(event.clone());
+                    }
+                }
+            })
+            .expect("Failed to launch event system thread");
+        log::info!("EventDispatcher - new - created new event system");
         Self {
-            subscribers: RwLock::new(vec![]),
+            subscribers,
+            sender: Some(tx),
         }
     }
 
@@ -37,27 +64,30 @@ impl<E: Event> EventDispatcher<E> {
      * A method for all event subscribers to call to register their event handler
      */
     pub fn subscribe(&self, subscriber: Arc<dyn EventSubscriber<E>>) {
-        dbg!("Received request to subscribe");
+        log::info!("EventDispatcher - subscribe - added new subscriber");
         self.subscribers.write().push(subscriber);
-        dbg!("Registeration completed in dispatcher");
     }
 
     /*
      * A method to be triggered to dispatch an event
      */
     pub fn dispatch(&self, event: E) {
-        let listeners = self.subscribers.read();
-        for listener in listeners.iter() {
-            (*listener.as_ref()).on_event(event.clone());
+        if let Some(sender) = self.sender.clone() {
+            let _ = sender.send(event);
+            log::info!("EventDispatcher - dispatch - sent new event");
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fmt::{Display, Write};
 
     use super::*;
+    use std::{
+        fmt::Display,
+        sync::atomic::{AtomicI8, Ordering},
+        time::Duration,
+    };
 
     #[derive(Debug, Clone, Copy)]
     enum TestEvent {
@@ -86,12 +116,16 @@ mod tests {
     #[derive(Default, Debug)]
     struct TestListener {
         event_messages: RwLock<Vec<String>>,
+        data_change: AtomicI8,
     }
 
     impl EventSubscriber<TestEvent> for TestListener {
         fn on_event(&self, event: TestEvent) {
+            self.data_change.store(
+                self.data_change.load(Ordering::Relaxed) + 1,
+                Ordering::Relaxed,
+            );
             self.event_messages.write().push(event.to_string());
-            println!("Event triggered with :{}", event);
         }
     }
 
@@ -108,6 +142,7 @@ mod tests {
         dispatcher.subscribe(subscriber.clone());
         let dispatcher_gaurd = dispatcher.subscribers.read();
         assert_eq!(dispatcher_gaurd.len(), 1);
+        assert_eq!(subscriber.data_change.load(Ordering::Relaxed), 0);
         let subscriber_gaurd = subscriber.event_messages.read();
         assert_eq!(subscriber_gaurd.len(), 0);
     }
@@ -119,6 +154,7 @@ mod tests {
         {
             let dispatcher_gaurd = dispatcher.subscribers.read();
             assert_eq!(dispatcher_gaurd.len(), 0);
+            assert_eq!(subscriber.data_change.load(Ordering::Relaxed), 0);
             let messages = subscriber.event_messages.read();
             assert_eq!(messages.len(), 0);
         }
@@ -126,13 +162,40 @@ mod tests {
         let dispatcher_gaurd = dispatcher.subscribers.read();
         assert_eq!(dispatcher_gaurd.len(), 1);
         {
+            assert_eq!(subscriber.data_change.load(Ordering::Relaxed), 0);
             let messages = subscriber.event_messages.read();
             assert_eq!(messages.len(), 0)
         }
         dispatcher.dispatch(TestEvent::Second);
+        let mut timeout = 100;
+        while subscriber.data_change.load(Ordering::Relaxed) == 0 && timeout > 0 {
+            thread::sleep(Duration::from_millis(100));
+            timeout -= 1;
+        }
+        assert!(timeout > 0);
+        assert_eq!(subscriber.data_change.load(Ordering::Relaxed), 1);
+        {
+            let messages = subscriber.event_messages.read();
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0], TestEvent::Second.to_string());
+        }
+
+        // dispatch multiple events
+        dispatcher.dispatch(TestEvent::First);
+        dispatcher.dispatch(TestEvent::Third);
+
+        timeout = 300;
+        while subscriber.data_change.load(Ordering::Relaxed) < 3 && timeout > 0 {
+            thread::sleep(Duration::from_millis(100));
+            timeout -= 1;
+        }
+        assert!(timeout > 0);
+        assert_eq!(subscriber.data_change.load(Ordering::Relaxed), 3);
         let messages = subscriber.event_messages.read();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0], TestEvent::Second.to_string());
+        assert_eq!(messages.len(), 3);
+        // messages are received in the same order as sent
+        assert_eq!(messages[1], TestEvent::First.to_string());
+        assert_eq!(messages[2], TestEvent::Third.to_string());
     }
 
     #[test]
